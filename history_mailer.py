@@ -203,12 +203,22 @@ def send_email(to=[], html="", subject=config.MAIL_SUBJECT_WARNING, from_address
   postURL = config.MAIL_BASEURL + config.MAIL_SENDMESSAGE
   res = session.post(postURL, headers=headers, data=json.dumps(payload))
 
+  # shape of successful response from smtp2go v3 API is
+  # {'request_id': 'cabe927a-c7e8-4af3-82c0-e39b86f5d918',
+  #  'data': {
+  #   'succeeded': 1,
+  #   'failed': 0,
+  #   'failures': [], 
+  #   'email_id': '1wUfod-4o5NDgrty1w-pLtI'
+  # }}
+
   if res.status_code != 200:
     ret = {}
     ret['status'] = ','.join([str(res.status_code), res.reason, res.text])
-    return ret
-
-  return res.json()
+  else:
+    ret = res.json()
+    ret['status'] = 'success' if ret.get('data', {}).get('succeeded') == 1 else 'error'
+  return ret
 
 def remove_history(history, purge=False):
   global GALAXY_BASEURL; global GALAXY_API_KEY
@@ -439,9 +449,9 @@ def run(histories, dryrun=True, do_delete=False, force=False, production=False):
       notification.sent = datetime.now()
       notification.status = msg_results['status']
       if notification.status == "success":
-        notification.message_id = msg_results['data']['message_id']
+        notification.message_id = msg_results['data']['email_id']
         message = Message()
-        message.message_id = msg_results['data']['message_id']
+        message.message_id = msg_results['data']['email_id']
         message.status = "Accepted"
         db_session.add(message)
         notification.message = message
@@ -597,9 +607,9 @@ def run(histories, dryrun=True, do_delete=False, force=False, production=False):
         notification.sent = datetime.now()
         notification.status = msg_results['status']
         if notification.status == "success":
-          notification.message_id = msg_results['data']['message_id']
+          notification.message_id = msg_results['data']['email_id']
           message = Message()
-          message.message_id = msg_results['data']['message_id']
+          message.message_id = msg_results['data']['email_id']
           message.status = "Accepted"
           db_session.add(message)
           notification.message = message
@@ -722,11 +732,6 @@ def main(dryrun=True, production=False, do_delete=False, force=False, notify=Fal
   global db
   global Session
 
-  if test_email:
-    # this trumps all other settings, results in test_email sent and nothing else
-    test_send_email()
-    sys.exit(0)
-
   if notify:
     notify_slack("Starting Galaxy History Mailer", '\n'.join([f"Dryrun: {dryrun}", "Server: " + ('Production' if production else 'Staging'), f"Deletion: {do_delete}", f"Force Notify: {force}", f"Purge: {purge}"]), 'good')
 
@@ -745,6 +750,11 @@ def main(dryrun=True, production=False, do_delete=False, force=False, notify=Fal
 
   engine = create_engine(db_uri)
   Session = sessionmaker(bind=engine)
+
+  if test_email:
+    # this trumps all other settings, results in test_email sent and nothing else
+    test_send_email()
+    sys.exit(0)
 
   if drop_db:
     Base.metadata.drop_all(engine)
